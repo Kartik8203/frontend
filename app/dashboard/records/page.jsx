@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { getLatestAssessments, getPatientAssessments } from '@/lib/firebaseFirestore';
+import { getLatestAssessments, getPatientAssessments,deleteAssessment } from '@/lib/firebaseFirestore';
 
 export default function RecordsPage() {
     const router = useRouter();
@@ -12,6 +12,7 @@ export default function RecordsPage() {
     const [searchTerm, setSearchTerm] = useState('');
     const [sortConfig, setSortConfig] = useState({ key: 'timestamp', direction: 'desc' });
     const [error, setError] = useState(null);
+    const [deleteStatus, setDeleteStatus] = useState({ isDeleting: false, message: null, isError: false });
 
     useEffect(() => {
         async function fetchFirestoreData() {
@@ -150,15 +151,67 @@ export default function RecordsPage() {
         router.push('/dashboard');
     };
 
-    const deleteRecord = (recordId) => {
-        // Note: This only deletes from local state
-        // In a real app, you would also delete from Firestore
-        const updatedRecords = records.filter(record => record.timestamp !== recordId);
-        localStorage.setItem('patientRecords', JSON.stringify(updatedRecords));
-        setRecords(updatedRecords);
-        
-        if (selectedRecord && selectedRecord.timestamp === recordId) {
-            setSelectedRecord(null);
+    const deleteRecord = async (record) => {
+        try {
+            // Show deleting status
+            setDeleteStatus({ isDeleting: true, message: 'Deleting record...', isError: false });
+            
+            // Check if this record has a Firestore ID
+            if (record.firestoreId) {
+                // Delete from Firestore
+                await deleteAssessment(record.firestoreId);
+                
+                // Update local state
+                const updatedRecords = records.filter(r => r.firestoreId !== record.firestoreId);
+                setRecords(updatedRecords);
+                
+                // Clear selected record if it was the one deleted
+                if (selectedRecord && selectedRecord.firestoreId === record.firestoreId) {
+                    setSelectedRecord(null);
+                }
+                
+                setDeleteStatus({ isDeleting: false, message: 'Record deleted successfully', isError: false });
+                
+                // Clear success message after 3 seconds
+                setTimeout(() => {
+                    setDeleteStatus({ isDeleting: false, message: null, isError: false });
+                }, 3000);
+            } else {
+                // If it's a local record
+                const updatedRecords = records.filter(r => r.timestamp !== record.timestamp);
+                localStorage.setItem('patientRecords', JSON.stringify(updatedRecords));
+                setRecords(updatedRecords);
+                
+                if (selectedRecord && selectedRecord.timestamp === record.timestamp) {
+                    setSelectedRecord(null);
+                }
+                
+                setDeleteStatus({ isDeleting: false, message: 'Local record deleted', isError: false });
+                
+                // Clear success message after 3 seconds
+                setTimeout(() => {
+                    setDeleteStatus({ isDeleting: false, message: null, isError: false });
+                }, 3000);
+            }
+        } catch (error) {
+            console.error("Error deleting record:", error);
+            setDeleteStatus({ 
+                isDeleting: false, 
+                message: `Error deleting record: ${error.message}`, 
+                isError: true 
+            });
+            
+            // Clear error message after 5 seconds
+            setTimeout(() => {
+                setDeleteStatus({ isDeleting: false, message: null, isError: false });
+            }, 5000);
+        }
+    };
+
+    // New function to show confirmation dialog before deleting
+    const confirmDelete = (record) => {
+        if (window.confirm(`Are you sure you want to delete this assessment for ${record.name}? This action cannot be undone.`)) {
+            deleteRecord(record);
         }
     };
 
@@ -208,7 +261,7 @@ export default function RecordsPage() {
 
     return (
         <div className="min-h-screen w-full bg-white dark:bg-zinc-900 text-gray-900 dark:text-gray-100 overflow-auto" style={{ height: "calc(90vh - 220px)" }}>
-            <div className="p-6">
+            <div className="p-6 h-full">
                 <div className="flex items-center mb-8">
                     <div>
                         <h2 className="text-2xl font-bold mb-1">Patient Records</h2>
@@ -227,9 +280,12 @@ export default function RecordsPage() {
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className={`lg:col-span-${selectedRecord ? '2' : '3'}`}>
-                        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 mb-6">
+                {/* Main content area - flexbox layout for better responsive handling */}
+                <div className="flex flex-col lg:flex-row gap-6 h-full">
+                    {/* Left content area (grows to fill available space) */}
+                    <div className={`flex-grow ${selectedRecord ? 'lg:w-3/4' : 'w-full'}`}>
+                        {/* Patient records table */}
+                        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 mb-6 w-full">
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6">
                                 <h5 className="text-lg font-medium flex items-center mb-3 sm:mb-0">
                                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -251,16 +307,7 @@ export default function RecordsPage() {
                                 </div>
                             </div>
 
-                            {error && (
-                                <div className="mb-4 bg-yellow-50 dark:bg-yellow-900 dark:bg-opacity-20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-3 text-yellow-800 dark:text-yellow-400">
-                                    <p className="flex items-center">
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                                        </svg>
-                                        {error}
-                                    </p>
-                                </div>
-                            )}
+                           
 
                             <div className="overflow-x-auto">
                                 <table className="min-w-full">
@@ -360,14 +407,24 @@ export default function RecordsPage() {
                                                     <button 
                                                         onClick={() => viewPatientDetails(record)}
                                                         className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 mr-3"
+                                                        disabled={deleteStatus.isDeleting}
                                                     >
                                                         View
                                                     </button>
                                                     <button 
-                                                        onClick={() => deleteRecord(record.timestamp)}
+                                                        onClick={() => confirmDelete(record)}
                                                         className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300"
+                                                        disabled={deleteStatus.isDeleting}
                                                     >
-                                                        Delete
+                                                        {deleteStatus.isDeleting && record.firestoreId === selectedRecord?.firestoreId ? (
+                                                            <span className="flex items-center">
+                                                                <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-red-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                                </svg>
+                                                                Deleting...
+                                                            </span>
+                                                        ) : 'Delete'}
                                                     </button>
                                                 </td>
                                             </tr>
@@ -386,54 +443,54 @@ export default function RecordsPage() {
                             )}
                         </div>
 
-                        {!selectedRecord && (
-                            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6">
-                                <h5 className="text-lg font-medium flex items-center mb-4">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        {/* Risk trends chart - only show if no patient is selected or on larger screens */}
+                        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 w-full">
+                            <h5 className="text-lg font-medium flex items-center mb-4">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                </svg>
+                                Recent Risk Trends
+                            </h5>
+                            {chartData.length > 0 ? (
+                                <div className="h-64">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <BarChart
+                                            data={chartData}
+                                            margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                                        >
+                                            <CartesianGrid strokeDasharray="3 3" />
+                                            <XAxis dataKey="date" />
+                                            <YAxis domain={[0, 100]} />
+                                            <Tooltip 
+                                                formatter={(value, name) => [`${value}%`, 'Risk Score']}
+                                                labelFormatter={(label) => `${label}`}
+                                            />
+                                            <Legend />
+                                            <Bar 
+                                                dataKey="riskScore" 
+                                                name="Risk Score" 
+                                                fill="#6366f1"
+                                                radius={[4, 4, 0, 0]}
+                                                barSize={30}
+                                            />
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            ) : (
+                                <div className="flex flex-col items-center justify-center h-64">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                                     </svg>
-                                    Recent Risk Trends
-                                </h5>
-                                {chartData.length > 0 ? (
-                                    <div className="h-64">
-                                        <ResponsiveContainer width="100%" height="100%">
-                                            <BarChart
-                                                data={chartData}
-                                                margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                                            >
-                                                <CartesianGrid strokeDasharray="3 3" />
-                                                <XAxis dataKey="date" />
-                                                <YAxis domain={[0, 100]} />
-                                                <Tooltip 
-                                                    formatter={(value, name) => [`${value}%`, 'Risk Score']}
-                                                    labelFormatter={(label) => `${label}`}
-                                                />
-                                                <Legend />
-                                                <Bar 
-                                                    dataKey="riskScore" 
-                                                    name="Risk Score" 
-                                                    fill="#6366f1"
-                                                    radius={[4, 4, 0, 0]}
-                                                    barSize={30}
-                                                />
-                                            </BarChart>
-                                        </ResponsiveContainer>
-                                    </div>
-                                ) : (
-                                    <div className="flex flex-col items-center justify-center h-64">
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                                        </svg>
-                                        <p className="mt-4 text-gray-500 dark:text-gray-400">No chart data available</p>
-                                    </div>
-                                )}
-                            </div>
-                        )}
+                                    <p className="mt-4 text-gray-500 dark:text-gray-400">No chart data available</p>
+                                </div>
+                            )}
+                        </div>
                     </div>
 
+                    {/* Right content area - Patient details (only visible when a patient is selected) */}
                     {selectedRecord && (
-                        <div className="lg:col-span-1">
-                            <div className={`bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 border-l-4 ${getBorderColor(selectedRecord.riskLevel)}`}>
+                        <div className="lg:w-1/4 w-full">
+                            <div className={`bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 border-l-4 ${getBorderColor(selectedRecord.riskLevel)} sticky top-6`}>
                                 <div className="flex justify-between items-center mb-4">
                                     <h5 className="text-lg font-medium flex items-center">
                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
